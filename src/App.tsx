@@ -1,56 +1,43 @@
 import React, { useState } from 'react';
-import { ArrowRight, Workflow } from 'lucide-react';
-import WelcomePage from './components/WelcomePage.tsx';
-import LoginModal from './components/LoginModal.tsx';
-import WorkflowWizard from './components/WorkflowWizard.tsx';
-import Dashboard from './components/Dashboard.tsx';
-import ApiService from './services/api';
-
-
-type Page = 'welcome' | 'wizard' | 'dashboard';
+import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
+import WelcomePage from './components/WelcomePage';
+import LoginPage from './components/LoginPage';
+import RoleSelectionPage from './components/RoleSelectionPage';
+import WorkflowWizard from './components/WorkflowWizard';
+import Dashboard from './components/Dashboard';
 
 function App() {
+  const navigate = useNavigate();
   const [isLoginOpen, setIsLoginOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState<Page>('welcome');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-
-  const handleLogin = async (userType: 'user' | 'role', role?: string) => {
-    setIsAuthenticated(true);
+  const handleLogin = (userId: number, roles: string[]) => {
+    console.log('handleLogin called with:', { userId, roles }); // Debug log
     setIsLoginOpen(false);
-    if (userType === 'role' && role === 'designer') {
-      setCurrentPage('wizard');
-    } else {
-      setCurrentPage('dashboard');
-    }
+    navigate('/role-selection', { state: { userId, roles } }); // Ensure state is passed
   };
 
-  const handleLogout =  async() => {
-    await ApiService.logout();
-    setIsAuthenticated(false);
-    setCurrentPage('welcome');
+  const handleLogout = () => {
+    navigate('/welcome');
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
-      {isLoginOpen && (
-        <LoginModal 
+      {isLoginOpen ? (
+        <LoginPage 
           onClose={() => setIsLoginOpen(false)} 
           onLogin={handleLogin}
         />
-      )}
-      
-      {currentPage === 'welcome' && (
-        <WelcomePage onGetStarted={() => setIsLoginOpen(true)} />
-      )}
-      
-      {currentPage === 'wizard' && (
-        <WorkflowWizard onComplete={() => setCurrentPage('dashboard')} />
-      )}
-      
-      {currentPage === 'dashboard' && (
-        <Dashboard onLogout={handleLogout} />
-      )}
+      ) : null}
+
+      <Routes>
+        <Route path="/welcome" element={<WelcomePage onGetStarted={() => setIsLoginOpen(true)} />} />
+        <Route path="/login" element={<LoginPage onLogin={handleLogin} onClose={() => setIsLoginOpen(false)} />} />
+        <Route path="/role-selection" element={<RoleSelectionPage />} />
+        <Route path="/wizard" element={<WorkflowWizard onComplete={() => navigate('/dashboard')} />} />
+        <Route path="/dashboard" element={<Dashboard onLogout={handleLogout} />} />
+        <Route path="/" element={<Navigate to="/welcome" replace />} />
+      </Routes>
     </div>
   );
 }

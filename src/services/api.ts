@@ -1,95 +1,71 @@
 // src/services/api.ts
+import axios from 'axios';
 
-const API_BASE_URL =  'http://localhost:5000/api';
+const API_URL = 'http://localhost:5000/api'; // Adjust to your backend URL and port
 
-export interface WorkflowResponse {
-  id: number;
-  name: string;
-  description: string;
-  status: 'Active' | 'Inactive';
-  stages: Array<{
-    name: string;
-    description: string;
-    actorType: 'USER' | 'ROLE';
-    actorName: string;
-    actorCount: number;
-    anyAllFlag: 'ANY' | 'ALL';
-    conflictOfInterestCheck: boolean;
-    documents?: {
-      required: boolean;
-    }[];
-  }>;
+// Define interfaces based on your database structure
+export interface Workflow {
+  workflow_master_id?: number;
+  wfd_name: string;
+  wfd_desc: string;
+  wfd_status: string;
+  stages?: Stage[];
 }
 
-export interface LoginCredentials {
-  username: string;
-  password: string;
-  userType: 'user' | 'role';
-  role?: string;
+export interface Stage {
+  idwfd_stages?: number;
+  wf_id: number;
+  seq_no: number;
+  stage_name: string;
+  stage_desc: string;
+  stage_actor_id?: number;
+  actor_type?: string;
+  actor_count?: number;
 }
 
-class ApiService {
-  private static async fetchWithAuth(url: string, options: RequestInit = {}) {
-    const token = localStorage.getItem('authToken');
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...options.headers,
-    };
-
-    const response = await fetch(`${API_BASE_URL}${url}`, {
-      ...options,
-      headers,
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || 'An error occurred');
+// Workflow API functions
+export const workflowApi = {
+  // Get all workflows
+  getAll: async (): Promise<Workflow[]> => {
+    try {
+      const response = await axios.get(`${API_URL}/workflows`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching workflows:', error);
+      throw error;
     }
-
-    return response.json();
+  },
+  
+  // Get workflow by ID with its stages
+  getById: async (id: number): Promise<Workflow> => {
+    try {
+      const response = await axios.get(`${API_URL}/workflows/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error fetching workflow ${id}:`, error);
+      throw error;
+    }
+  },
+  
+  // Create new workflow
+  create: async (workflow: Omit<Workflow, 'workflow_master_id'>): Promise<Workflow> => {
+    try {
+      const response = await axios.post(`${API_URL}/workflows`, workflow);
+      return response.data;
+    } catch (error) {
+      console.error('Error creating workflow:', error);
+      throw error;
+    }
+  },
+  
+  // Add stage to workflow
+  addStage: async (workflowId: number, stage: Omit<Stage, 'idwfd_stages' | 'wf_id'>): Promise<Stage> => {
+    try {
+      const response = await axios.post(`${API_URL}/workflows/${workflowId}/stages`, stage);
+      return response.data;
+    } catch (error) {
+      console.error(`Error adding stage to workflow ${workflowId}:`, error);
+      throw error;
+    }
   }
-
-  // Authentication
-  static async login(credentials: LoginCredentials): Promise<{ token: string; user: any }> {
-    return this.fetchWithAuth('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(credentials),
-    });
-  }
-
-  static async logout(): Promise<void> {
-    localStorage.removeItem('authToken');
-  }
-
-  // Workflows
-  static async getWorkflows(): Promise<WorkflowResponse[]> {
-    return this.fetchWithAuth('/workflows');
-  }
-
-  static async getWorkflow(id: number): Promise<WorkflowResponse> {
-    return this.fetchWithAuth(`/workflows/${id}`);
-  }
-
-  static async createWorkflow(workflow: Omit<WorkflowResponse, 'id'>): Promise<WorkflowResponse> {
-    return this.fetchWithAuth('/workflows', {
-      method: 'POST',
-      body: JSON.stringify(workflow),
-    });
-  }
-
-  static async updateWorkflow(id: number, workflow: Partial<WorkflowResponse>): Promise<WorkflowResponse> {
-    return this.fetchWithAuth(`/workflows/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(workflow),
-    });
-  }
-
-  static async deleteWorkflow(id: number): Promise<void> {
-    return this.fetchWithAuth(`/workflows/${id}`, {
-      method: 'DELETE',
-    });
-  }
-}
-
-export default ApiService;
+};

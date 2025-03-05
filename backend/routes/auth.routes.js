@@ -1,113 +1,60 @@
-// auth/jwt.js
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const express = require('express');
+const router = express.Router();
 const db = require('../config/db.config');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'; // Should be in environment variables
-
-const login = async (req, res) => {
-  const { user_name, password } = req.body;
-
-  // Validate input
-  if (!user_name || !password) {
-    return res.status(400).json({
-      status: 'error',
-      message: 'Username and password are required'
-    });
-  }
+router.post('/login', async (req, res) => {
+  const { username, password } = req.body;
 
   try {
-    // Get user from database
-    const [users] = await db.query(
-      'SELECT * FROM rb_user_master WHERE user_name = ?',
-      [user_name]
+    console.log('Login attempt:', { username, password }); // Debugging log
+
+    // Query rb_user_master for the user by user_name, ensuring the user is active
+    const [rows] = await db.query(
+      'SELECT idrb_user_master, password, is_active FROM rb_user_master WHERE user_name = ?',
+      [username]
     );
 
-    // Check if user exists
-    if (users.length === 0) {
-      return res.status(401).json({
-        status: 'error',
-        message: 'Invalid credentials'
-      });
+    if (rows.length === 0) {
+      console.log('User not found:', username);
+      return res.status(401).json({ message: 'Invalid username or password' });
     }
 
-    const user = users[0];
+    const user = rows[0];
+    console.log('Found user:', { idrb_user_master: user.idrb_user_master, password: user.password, is_active: user.is_active });
 
-    // For now, direct password comparison since bcrypt isn't implemented yet
+    // Check if user is active
+    if (user.is_active !== 1) {
+      console.log('User is inactive:', username);
+      return res.status(401).json({ message: 'User account is inactive' });
+    }
+
+    // Compare passwords in plain text (as requested)
     if (password !== user.password) {
-      return res.status(401).json({
-        status: 'error',
-        message: 'Invalid credentials'
-      });
+      console.log('Password mismatch for user:', username);
+      return res.status(401).json({ message: 'Invalid username or password' });
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        user_id: user.idrb_user_master,
-        user_name: user.user_name
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
+    // Fetch roles for the user from rb_role_master via rb_user_role
+    const [roleRows] = await db.query(
+      'SELECT r.rb_role_name FROM rb_role_master r JOIN rb_user_role ur ON r.idrb_role_master = ur.rb_role_id WHERE ur.rb_user_id = ?',
+      [user.idrb_user_master]
     );
 
-    // Send response
-    res.json({
-      status: 'success',
-      message: 'Login successful',
-      data: {
-        token,
-        user: {
-          id: user.idrb_user_master,
-          user_name: user.user_name
-        }
-      }
-    });
+    const roles = roleRows.map((row) => row.rb_role_name); // Use rb_role_name from rb_role_master
+    console.log('User roles:', roles);
 
+    // Update last_login timestamp (assuming this column exists in rb_user_master)
+    await db.query(
+      'UPDATE rb_user_master SET last_login = NOW() WHERE idrb_user_master = ?',
+      [user.idrb_user_master]
+    );
+
+    // Return userId (using idrb_user_master) and roles
+    res.json({ userId: user.idrb_user_master, roles });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Internal server error during login'
-    });
+    console.error('Login error:', error.message);
+    res.status(500).json({ message: `Login failed: ${error.message}` });
   }
-};
+});
 
-// Middleware to verify JWT token
-const verifyToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader) {
-    return res.status(401).json({
-      status: 'error',
-      message: 'No token provided'
-    });
-  }
-
-  // Format should be: "Bearer <token>"
-  const tokenParts = authHeader.split(' ');
-  if (tokenParts.length !== 2 || tokenParts[0] !== 'Bearer') {
-    return res.status(401).json({
-      status: 'error',
-      message: 'Invalid token format'
-    });
-  }
-
-  const token = tokenParts[1];
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({
-      status: 'error',
-      message: 'Invalid or expired token'
-    });
-  }
-};
-
-module.exports = {
-  login,
-  verifyToken
-};
+module.exports = router;
