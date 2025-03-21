@@ -4,10 +4,10 @@ import { ArrowRight, Plus, Save, AlertCircle, ArrowLeft, Edit, Trash2 } from 'lu
 import { useNavigate, useLocation } from 'react-router-dom';
 
 interface WorkflowResponse {
-  workflow_master_id?: number; // Made optional since it’s auto-generated
-  wfd_name: string;
-  wfd_desc: string;
-  wfd_status: 'active' | 'inactive'; // Match database ENUM
+  workflowMasterId?: number;
+  wfdName: string;
+  wfdDesc: string;
+  wfdStatus: 'Active' | 'Inactive';
 }
 
 interface Workflow extends WorkflowResponse {
@@ -15,18 +15,31 @@ interface Workflow extends WorkflowResponse {
 }
 
 interface Stage {
-  idwfd_stages?: number;
-  wf_id?: number;
-  seq_no: number;
-  stage_name: string;
-  stage_desc: string;
-  no_of_uploads: number;
-  actor_type: 'role' | 'user'; // Updated to lowercase to match database
-  actor_count: number;
-  any_all_flag: 'any' | 'all'; // Updated to lowercase to match database
-  conflict_check: number;
-  document_required: number;
-  actor_name: string;
+  idwfdStages?: number;
+  wfId?: number;
+  seqNo: number;
+  stageName: string;
+  stageDesc: string;
+  noOfUploads: number;
+  actorType: 'role' | 'user';
+  actorCount: number;
+  anyAllFlag: 'any' | 'all';
+  conflictCheck: number;
+  documentRequired: number;
+  actorName: string;
+  actions?: Action[];
+}
+
+interface Action {
+  idwfdStagesActions?: number;
+  stageId?: number;
+  tempId?: string; // Add tempId for frontend rendering
+  actionName: string;
+  actionDesc?: string;
+  actorId?: number;
+  nextStageType: 'next' | 'prev' | 'complete';
+  nextStageId?: number;
+  requiredCount: number;
 }
 
 interface WorkflowWizardProps {
@@ -46,6 +59,7 @@ const AVAILABLE_ROLES = [
   { value: 'auditor', label: 'System Auditor' },
   { value: 'supervisor', label: 'Team Supervisor' },
   { value: 'coordinator', label: 'Process Coordinator' },
+  { value: 'tpc-chair', label: 'TPC Chair' },
 ];
 
 const inputStyles = "mt-1 block w-full rounded-md border-2 border-purple-300 shadow-sm focus:border-purple-500 focus:ring focus:ring-purple-200 focus:ring-opacity-50";
@@ -54,57 +68,83 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
   const navigate = useNavigate();
   const location = useLocation();
   const [currentStep, setCurrentStep] = useState<WizardStep>(1);
-  const [workflowName, setWorkflowName] = useState(existingWorkflow?.wfd_name || '');
-  const [workflowDesc, setWorkflowDesc] = useState(existingWorkflow?.wfd_desc || '');
-  const [workflowStatus, setWorkflowStatus] = useState<'active' | 'inactive'>(existingWorkflow?.wfd_status || 'active');
+  const [workflowName, setWorkflowName] = useState(existingWorkflow?.wfdName || '');
+  const [workflowDesc, setWorkflowDesc] = useState(existingWorkflow?.wfdDesc || '');
+  const [workflowStatus, setWorkflowStatus] = useState<'active' | 'inactive'>(existingWorkflow?.wfdStatus || 'active');
   const [stages, setStages] = useState<Stage[]>(existingWorkflow?.stages || []);
-  const [currentStage, setCurrentStage] = useState({
+  const [currentStage, setCurrentStage] = useState<{
+    name: string;
+    description: string;
+    actorType: 'role' | 'user';
+    actorName: string;
+    actorCount: number;
+    anyAllFlag: 'any' | 'all';
+    conflictCheck: boolean;
+    documentCount: number;
+    documents: string[];
+    actions: Action[];
+  }>({
     name: '',
     description: '',
-    actorType: 'role' as 'role' | 'user', // Updated to lowercase to match database
+    actorType: 'role',
     actorName: '',
     actorCount: 1,
-    any_all_flag: 'any' as 'any' | 'all', // Updated to lowercase to match database
-    conflictOfInterestCheck: false,
+    anyAllFlag: 'any',
+    conflictCheck: false,
     documentCount: 0,
-    documents: [] as { required: boolean }[],
+    documents: [],
+    actions: [],
   });
-  const [workflowId, setWorkflowId] = useState<number | null>(existingWorkflow?.workflow_master_id || null);
+  const [workflowId, setWorkflowId] = useState<number | null>(existingWorkflow?.workflowMasterId || null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [requireDocuments, setRequireDocuments] = useState(false);
   const [editingStageIndex, setEditingStageIndex] = useState<number | null>(null);
   const userRoles = (location.state as { roles: string[] })?.roles || [];
 
-  // Restrict workflow creation to Workflow Designer
   const canCreateWorkflow = userRoles.includes('workflow-designer');
 
   useEffect(() => {
+    console.log('Checking user role for workflow creation:', userRoles);
     if (!canCreateWorkflow) {
       setError('Access Denied: Only Workflow Designers can create or manage workflows.');
       return;
     }
 
     const fetchWorkflow = async () => {
-      if (existingWorkflow?.workflow_master_id) {
+      if (existingWorkflow?.workflowMasterId) {
         try {
           setLoading(true);
-          const response = await axios.get<Workflow>(`http://localhost:5000/api/workflows/${existingWorkflow.workflow_master_id}`);
+          console.log('Fetching existing workflow with ID:', existingWorkflow.workflowMasterId);
+          const response = await axios.get<Workflow>(`http://localhost:5000/api/workflows/${existingWorkflow.workflowMasterId}`);
           console.log('Fetched existing workflow:', response.data);
           const workflowData = response.data;
-          setWorkflowName(workflowData.wfd_name);
-          setWorkflowDesc(workflowData.wfd_desc);
-          setWorkflowStatus(workflowData.wfd_status);
-          setStages(workflowData.stages || []);
-          setWorkflowId(workflowData.workflow_master_id || null);
+          setWorkflowName(workflowData.wfdName);
+          setWorkflowDesc(workflowData.wfdDesc);
+          setWorkflowStatus(workflowData.wfdStatus);
+          setStages(workflowData.stages.map(stage => ({
+            idwfdStages: stage.idwfdStages,
+            wfId: stage.wfId,
+            seqNo: stage.seqNo,
+            stageName: stage.stageName,
+            stageDesc: stage.stageDesc,
+            noOfUploads: stage.noOfUploads,
+            actorType: stage.actorType,
+            actorCount: stage.actorCount,
+            anyAllFlag: stage.anyAllFlag,
+            conflictCheck: stage.conflictCheck,
+            documentRequired: stage.documentRequired,
+            actorName: stage.actorName,
+            actions: (stage.actions || []).map(action => ({
+              ...action,
+              tempId: `action-${Date.now()}-${Math.random()}`, // Add tempId for rendering
+            })),
+          })));
+          setWorkflowId(workflowData.workflowMasterId || null);
           setLoading(false);
         } catch (err) {
           const error = err as AxiosError<{ message?: string }>;
-          console.error('Error fetching workflow:', {
-            message: error.message,
-            response: error.response ? error.response.data : 'No response data',
-            status: error.response ? error.response.status : 'No status',
-          });
+          console.error('Error fetching workflow:', error.response?.data || error.message);
           setError(`Failed to load workflow data: ${error.response?.data?.message || error.message || 'Network error'}`);
           setLoading(false);
         }
@@ -114,11 +154,11 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
   }, [existingWorkflow, canCreateWorkflow]);
 
   const validateStep1 = () => {
+    console.log('Validating Step 1 - Workflow Details:', { workflowName, workflowDesc, workflowStatus });
     if (!canCreateWorkflow) {
       setError('Access Denied: Only Workflow Designers can create workflows.');
       return false;
     }
-    console.log('Validating Step 1, workflow:', { workflowName, workflowDesc });
     if (!workflowName.trim()) {
       setError('Workflow name is required');
       return false;
@@ -132,13 +172,18 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
   };
 
   const validateStep2 = () => {
+    console.log('Validating Step 2 - Stages:', stages);
     if (!canCreateWorkflow) {
       setError('Access Denied: Only Workflow Designers can manage stages.');
       return false;
     }
-    console.log('Validating Step 2, stages:', stages);
     if (stages.length === 0) {
       setError('At least one stage is required');
+      return false;
+    }
+    const lastStage = stages[stages.length - 1];
+    if (!lastStage.actions?.some(a => a.nextStageType === 'complete')) {
+      setError('The final stage must have a "Complete" action.');
       return false;
     }
     setError(null);
@@ -146,6 +191,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
   };
 
   const validateCurrentStage = () => {
+    console.log('Validating Current Stage:', currentStage);
     if (!canCreateWorkflow) {
       setError('Access Denied: Only Workflow Designers can add or edit stages.');
       return false;
@@ -166,6 +212,30 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       setError('Actor count must be at least 1');
       return false;
     }
+    if (!['role', 'user'].includes(currentStage.actorType)) {
+      setError('Actor type must be either "role" or "user"');
+      return false;
+    }
+    if (!['any', 'all'].includes(currentStage.anyAllFlag)) {
+      setError('Any/All flag must be either "any" or "all"');
+      return false;
+    }
+    if (currentStage.actions.length > 0) {
+      for (const action of currentStage.actions) {
+        if (!action.actionName.trim()) {
+          setError('Action name is required for all actions');
+          return false;
+        }
+        if (!['next', 'prev', 'complete'].includes(action.nextStageType)) {
+          setError('Action result type must be "next", "prev", or "complete"');
+          return false;
+        }
+        if (action.requiredCount < 1 || action.requiredCount > currentStage.actorCount) {
+          setError(`Required count must be between 1 and ${currentStage.actorCount}`);
+          return false;
+        }
+      }
+    }
     setError(null);
     return true;
   };
@@ -175,35 +245,30 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       setError('Access Denied: Only Workflow Designers can create workflows.');
       return null;
     }
-    if (workflowId) return workflowId;
+    if (workflowId) {
+      console.log('Workflow already exists with ID:', workflowId);
+      return workflowId;
+    }
 
     try {
       setLoading(true);
-      console.log('Sending POST /api/workflows with:', {
-        wfd_name: workflowName,
-        wfd_desc: workflowDesc,
-        wfd_status: workflowStatus,
-      });
+      console.log('Creating new workflow with:', { workflowName, workflowDesc, workflowStatus });
       const response = await axios.post<WorkflowResponse>('http://localhost:5000/api/workflows', {
-        wfd_name: workflowName,
-        wfd_desc: workflowDesc,
-        wfd_status: workflowStatus,
+        wfdName: workflowName,
+        wfdDesc: workflowDesc,
+        wfdStatus: workflowStatus,
       });
-      const newWorkflowId = response.data.workflow_master_id;
-      if (typeof newWorkflowId !== 'number' || isNaN(newWorkflowId)) {
-        throw new Error('Invalid workflow ID received from server');
+      const newWorkflowId = response.data.workflowMasterId;
+      if (!newWorkflowId) {
+        throw new Error('Failed to retrieve new workflow ID');
       }
-      console.log('Received workflow ID:', newWorkflowId);
+      console.log('New workflow created with ID:', newWorkflowId);
       setWorkflowId(newWorkflowId);
       setLoading(false);
       return newWorkflowId;
     } catch (err) {
       const error = err as AxiosError<{ message?: string }>;
-      console.error('Error creating workflow:', {
-        message: error.message,
-        response: error.response ? error.response.data : 'No response data',
-        status: error.response ? error.response.status : 'No status',
-      });
+      console.error('Error creating workflow:', error.response?.data || error.message);
       setError(`Failed to create workflow: ${error.response?.data?.message || error.message || 'Network error'}`);
       setLoading(false);
       return null;
@@ -214,50 +279,71 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
     if (!validateCurrentStage()) return;
 
     const wfId = await createWorkflowIfNeeded();
-    if (!wfId || !canCreateWorkflow) return;
+    if (!wfId || !canCreateWorkflow) {
+      console.log('Cannot add stage: Workflow ID not found or user lacks permission');
+      return;
+    }
 
-    const stageData: Partial<Stage> = {
-      seq_no: stages.length + 1,
-      stage_name: currentStage.name,
-      stage_desc: currentStage.description,
-      no_of_uploads: currentStage.documentCount,
-      actor_type: currentStage.actorType,
-      actor_name: currentStage.actorName,
-      actor_count: currentStage.actorCount,
-      any_all_flag: currentStage.any_all_flag,
-      conflict_check: currentStage.conflictOfInterestCheck ? 1 : 0,
-      document_required: requireDocuments ? 1 : 0,
-      wf_id: wfId,
+    // Transform actions to snake_case for the backend
+    const actionsForBackend = currentStage.actions.map(action => {
+      const transformedAction = {
+        action_name: action.actionName,
+        action_desc: action.actionDesc || null,
+        actor_id: action.actorId || null,
+        next_stage_type: action.nextStageType,
+        next_stage_id: action.nextStageId || null,
+        required_count: action.requiredCount || 1,
+      };
+      console.log('Transformed action for backend:', transformedAction);
+      return transformedAction;
+    });
+
+    const stageData = {
+      seqNo: stages.length + 1,
+      stageName: currentStage.name,
+      stageDesc: currentStage.description,
+      noOfUploads: currentStage.documentCount,
+      actorType: currentStage.actorType,
+      actorName: currentStage.actorName,
+      actorCount: currentStage.actorCount,
+      anyAllFlag: currentStage.anyAllFlag,
+      conflictCheck: currentStage.conflictCheck ? 1 : 0,
+      documentRequired: requireDocuments ? 1 : 0,
+      actions: actionsForBackend,
     };
+
+    console.log('Sending stageData to backend:', stageData);
 
     try {
       setLoading(true);
-      console.log('Sending POST /api/workflows/', wfId, '/stages with:', stageData);
       const response = await axios.post<Stage>(`http://localhost:5000/api/workflows/${wfId}/stages`, stageData);
-      console.log('Stage added with response:', response.data);
-      setStages([...stages, response.data]);
+      console.log('Stage added successfully with response:', response.data);
+      const updatedStage = {
+        ...response.data,
+        actions: (response.data.actions || []).map(action => ({
+          ...action,
+          tempId: `action-${Date.now()}-${Math.random()}`, // Add tempId for rendering
+        })),
+      };
+      setStages([...stages, updatedStage]);
       setCurrentStage({
         name: '',
         description: '',
         actorType: 'role',
         actorName: '',
         actorCount: 1,
-        any_all_flag: 'any',
-        conflictOfInterestCheck: false,
+        anyAllFlag: 'any',
+        conflictCheck: false,
         documentCount: 0,
         documents: [],
+        actions: [],
       });
       setRequireDocuments(false);
       setEditingStageIndex(null);
       setLoading(false);
     } catch (err) {
       const error = err as AxiosError<{ message?: string }>;
-      console.error('Error adding stage:', {
-        message: error.message,
-        response: error.response ? error.response.data : 'No response data',
-        status: error.response ? error.response.status : 'No status',
-        requestData: stageData,
-      });
+      console.error('Error adding stage:', error.response?.data || error.message);
       setError(`Failed to add stage: ${error.response?.data?.message || error.message || 'Network error'}`);
       setLoading(false);
     }
@@ -269,38 +355,39 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       return;
     }
     const stageToEdit = stages[index];
-    if (!stageToEdit || !stageToEdit.idwfd_stages) {
+    if (!stageToEdit || !stageToEdit.idwfdStages) {
       setError('Invalid stage selected for editing.');
       return;
     }
 
     try {
       setLoading(true);
-      const response = await axios.get<Stage>(`http://localhost:5000/api/workflows/${workflowId}/stages/${stageToEdit.idwfd_stages}`);
+      console.log('Fetching stage for editing:', stageToEdit.idwfdStages);
+      const response = await axios.get<Stage>(`http://localhost:5000/api/workflows/${workflowId}/stages/${stageToEdit.idwfdStages}`);
       const fetchedStage = response.data;
       console.log('Fetched stage for editing:', fetchedStage);
       setEditingStageIndex(index);
       setCurrentStage({
-        name: fetchedStage.stage_name,
-        description: fetchedStage.stage_desc,
-        actorType: fetchedStage.actor_type,
-        actorName: fetchedStage.actor_name,
-        actorCount: fetchedStage.actor_count,
-        any_all_flag: fetchedStage.any_all_flag,
-        conflictOfInterestCheck: !!fetchedStage.conflict_check,
-        documentCount: fetchedStage.no_of_uploads,
-        documents: fetchedStage.no_of_uploads > 0 ? Array(fetchedStage.no_of_uploads).fill({ required: !!fetchedStage.document_required }) : [],
+        name: fetchedStage.stageName,
+        description: fetchedStage.stageDesc,
+        actorType: fetchedStage.actorType,
+        actorName: fetchedStage.actorName,
+        actorCount: fetchedStage.actorCount,
+        anyAllFlag: fetchedStage.anyAllFlag,
+        conflictCheck: !!fetchedStage.conflictCheck,
+        documentCount: fetchedStage.noOfUploads,
+        documents: fetchedStage.noOfUploads > 0 ? Array(fetchedStage.noOfUploads).fill({ required: !!fetchedStage.documentRequired }) : [],
+        actions: (fetchedStage.actions || []).map(action => ({
+          ...action,
+          tempId: `action-${Date.now()}-${Math.random()}`, // Add tempId for rendering
+        })),
       });
-      setRequireDocuments(!!fetchedStage.document_required);
+      setRequireDocuments(!!fetchedStage.documentRequired);
       setCurrentStep(2);
       setLoading(false);
     } catch (err) {
       const error = err as AxiosError<{ message?: string }>;
-      console.error('Error fetching stage for editing:', {
-        message: error.message,
-        response: error.response ? error.response.data : 'No response data',
-        status: error.response ? error.response.status : 'No status',
-      });
+      console.error('Error fetching stage for editing:', error.response?.data || error.message);
       setError(`Failed to load stage for editing: ${error.response?.data?.message || error.message || 'Network error'}`);
       setLoading(false);
     }
@@ -311,7 +398,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       setError('Access Denied: Only Workflow Designers can update stages.');
       return;
     }
-    if (!validateCurrentStage() || editingStageIndex === null || !stages[editingStageIndex]?.idwfd_stages) {
+    if (!validateCurrentStage() || editingStageIndex === null || !stages[editingStageIndex]?.idwfdStages) {
       setError('Invalid stage or validation failed.');
       return;
     }
@@ -322,27 +409,47 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       return;
     }
 
-    const stageData: Partial<Stage> = {
-      seq_no: stages[editingStageIndex].seq_no,
-      stage_name: currentStage.name,
-      stage_desc: currentStage.description,
-      no_of_uploads: currentStage.documentCount,
-      actor_type: currentStage.actorType,
-      actor_name: currentStage.actorName,
-      actor_count: currentStage.actorCount,
-      any_all_flag: currentStage.any_all_flag,
-      conflict_check: currentStage.conflictOfInterestCheck ? 1 : 0,
-      document_required: requireDocuments ? 1 : 0,
+    // Transform actions to snake_case for the backend
+    const actionsForBackend = currentStage.actions.map(action => {
+      const transformedAction = {
+        action_name: action.actionName,
+        action_desc: action.actionDesc || null,
+        actor_id: action.actorId || null,
+        next_stage_type: action.nextStageType,
+        next_stage_id: action.nextStageId || null,
+        required_count: action.requiredCount || 1,
+      };
+      console.log('Transformed action for update:', transformedAction);
+      return transformedAction;
+    });
+
+    const stageData = {
+      seqNo: stages[editingStageIndex].seqNo,
+      stageName: currentStage.name,
+      stageDesc: currentStage.description,
+      noOfUploads: currentStage.documentCount,
+      actorType: currentStage.actorType,
+      actorName: currentStage.actorName,
+      actorCount: currentStage.actorCount,
+      anyAllFlag: currentStage.anyAllFlag,
+      conflictCheck: currentStage.conflictCheck ? 1 : 0,
+      documentRequired: requireDocuments ? 1 : 0,
+      actions: actionsForBackend,
     };
 
     try {
       setLoading(true);
-      console.log('Sending PUT /api/workflows/', wfId, '/stages/', stages[editingStageIndex].idwfd_stages, 'with:', stageData);
-      const response = await axios.put<Stage>(`http://localhost:5000/api/workflows/${wfId}/stages/${stages[editingStageIndex].idwfd_stages}`, stageData);
-      console.log('Stage updated with response:', response.data);
-
+      console.log('Updating stage with data:', stageData);
+      const response = await axios.put<Stage>(`http://localhost:5000/api/workflows/${wfId}/stages/${stages[editingStageIndex].idwfdStages}`, stageData);
+      console.log('Stage updated successfully with response:', response.data);
       const updatedStages = [...stages];
-      updatedStages[editingStageIndex] = response.data;
+      updatedStages[editingStageIndex] = {
+        ...response.data,
+        actions: (response.data.actions || []).map(action => ({
+          ...action,
+          tempId: `action-${Date.now()}-${Math.random()}`, // Add tempId for rendering
+        })),
+      };
       setStages(updatedStages);
       setCurrentStage({
         name: '',
@@ -350,22 +457,19 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
         actorType: 'role',
         actorName: '',
         actorCount: 1,
-        any_all_flag: 'any',
-        conflictOfInterestCheck: false,
+        anyAllFlag: 'any',
+        conflictCheck: false,
         documentCount: 0,
         documents: [],
+        actions: [],
       });
       setRequireDocuments(false);
       setEditingStageIndex(null);
       setLoading(false);
+      console.log('Stage updated successfully');
     } catch (err) {
       const error = err as AxiosError<{ message?: string }>;
-      console.error('Error updating stage:', {
-        message: error.message,
-        response: error.response ? error.response.data : 'No response data',
-        status: error.response ? error.response.status : 'No status',
-        requestData: stageData,
-      });
+      console.error('Error updating stage:', error.response?.data || error.message);
       setError(`Failed to update stage: ${error.response?.data?.message || error.message || 'Network error'}`);
       setLoading(false);
     }
@@ -376,7 +480,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       setError('Access Denied: Only Workflow Designers can delete stages.');
       return;
     }
-    if (!stages[index]?.idwfd_stages) {
+    if (!stages[index]?.idwfdStages) {
       setError('Invalid stage selected for deletion.');
       return;
     }
@@ -390,25 +494,60 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
 
       try {
         setLoading(true);
-        console.log('Sending DELETE /api/workflows/', wfId, '/stages/', stages[index].idwfd_stages);
-        await axios.delete(`http://localhost:5000/api/workflows/${wfId}/stages/${stages[index].idwfd_stages}`);
-        console.log('Stage deleted successfully');
-
+        console.log('Deleting stage:', stages[index].idwfdStages);
+        await axios.delete(`http://localhost:5000/api/workflows/${wfId}/stages/${stages[index].idwfdStages}`);
         const updatedStages = stages.filter((_, i) => i !== index);
-        updatedStages.forEach((stage, i) => stage.seq_no = i + 1);
+        updatedStages.forEach((stage, i) => stage.seqNo = i + 1);
         setStages(updatedStages);
         setLoading(false);
+        console.log('Stage deleted successfully');
       } catch (err) {
         const error = err as AxiosError<{ message?: string }>;
-        console.error('Error deleting stage:', {
-          message: error.message,
-          response: error.response ? error.response.data : 'No response data',
-          status: error.response ? error.response.status : 'No status',
-        });
+        console.error('Error deleting stage:', error.response?.data || error.message);
         setError(`Failed to delete stage: ${error.response?.data?.message || error.message || 'Network error'}`);
         setLoading(false);
       }
     }
+  };
+
+  const handleAddAction = () => {
+    if (!canCreateWorkflow) {
+      setError('Access Denied: Only Workflow Designers can add actions.');
+      return;
+    }
+    console.log('Adding new action to current stage. Current actions:', currentStage.actions);
+    setCurrentStage(prevStage => {
+      const newAction = {
+        tempId: `action-${Date.now()}-${Math.random()}`, // Unique temporary ID
+        actionName: '',
+        actionDesc: '',
+        nextStageType: 'next',
+        requiredCount: 1,
+      };
+      const newActions = [...prevStage.actions, newAction];
+      console.log('New actions after adding:', newActions);
+      return {
+        ...prevStage,
+        actions: newActions,
+      };
+    });
+  };
+
+  const handleUpdateAction = (index: number, field: keyof Action, value: any) => {
+    console.log(`Updating action at index ${index}, field ${field} with value:`, value);
+    const updatedActions = [...currentStage.actions];
+    updatedActions[index] = { ...updatedActions[index], [field]: value };
+    setCurrentStage({ ...currentStage, actions: updatedActions });
+  };
+
+  const handleDeleteAction = (index: number) => {
+    if (!canCreateWorkflow) {
+      setError('Access Denied: Only Workflow Designers can delete actions.');
+      return;
+    }
+    console.log('Deleting action at index:', index);
+    const updatedActions = currentStage.actions.filter((_, i) => i !== index);
+    setCurrentStage({ ...currentStage, actions: updatedActions });
   };
 
   const handleSubmit = async () => {
@@ -416,42 +555,33 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       setError('Access Denied: Only Workflow Designers can save workflows.');
       return;
     }
-    console.log('Attempting to save workflow with:', {
-      workflowId,
-      workflowName,
-      workflowDesc,
-      workflowStatus,
-      stages,
-    });
 
     if (!validateStep1() || !validateStep2()) {
-      console.log('Validation failed:', { workflowName, workflowDesc, stages });
       return;
     }
 
     try {
       setLoading(true);
+      console.log('Submitting workflow with data:', { workflowName, workflowDesc, workflowStatus, stages });
       let response;
       if (workflowId) {
-        console.log('Updating existing workflow:', workflowId);
         response = await axios.put<WorkflowResponse>(`http://localhost:5000/api/workflows/${workflowId}`, {
-          wfd_name: workflowName,
-          wfd_desc: workflowDesc,
-          wfd_status: workflowStatus,
+          wfdName: workflowName,
+          wfdDesc: workflowDesc,
+          wfdStatus: workflowStatus,
         });
       } else {
-        console.log('Creating new workflow');
         response = await axios.post<WorkflowResponse>('http://localhost:5000/api/workflows', {
-          wfd_name: workflowName,
-          wfd_desc: workflowDesc,
-          wfd_status: workflowStatus,
+          wfdName: workflowName,
+          wfdDesc: workflowDesc,
+          wfdStatus: workflowStatus,
         });
-        setWorkflowId(response.data.workflow_master_id || null); // Handle optional ID
+        setWorkflowId(response.data.workflowMasterId || null);
       }
 
       const workflowData: Workflow = {
         ...response.data,
-        stages: stages, // Ensure stages are included in the workflow data
+        stages: stages,
       };
       console.log('Workflow saved successfully:', workflowData);
       onComplete(workflowData);
@@ -477,6 +607,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
     }
 
     if (isValid) {
+      console.log('Moving to next step:', currentStep + 1);
       setCurrentStep((prev) => (prev < 3 ? (prev + 1) as WizardStep : prev));
       setError(null);
     }
@@ -487,6 +618,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       setError('Access Denied: Only Workflow Designers can modify document requirements.');
       return;
     }
+    console.log('Updating document count to:', count);
     const newDocuments = Array(count).fill({ required: false });
     setCurrentStage({
       ...currentStage,
@@ -500,6 +632,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
       setError('Access Denied: Only Workflow Designers can modify document requirements.');
       return;
     }
+    console.log(`Setting document ${index + 1} required to:`, required);
     const newDocuments = [...currentStage.documents];
     newDocuments[index] = { required };
     setCurrentStage({
@@ -514,13 +647,13 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
         <div className="bg-white shadow-xl rounded-lg p-8 max-w-md text-center">
           <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h2>
-          <p className="text-gray-600 mb-6">Only Workflow Designers can access this page. Please log in with the appropriate role or return to the dashboard.</p>
+          <p className="text-gray-600 mb-6">Only Workflow Designers can access this page.</p>
           <button
             onClick={() => {
               navigate('/dashboard');
               if (onCancel) onCancel();
             }}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Dashboard
@@ -534,7 +667,6 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-3xl mx-auto">
         <div className="bg-white shadow-xl rounded-lg p-8">
-          {/* Header with Cancel Button */}
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-2xl font-bold text-gray-900">
               {existingWorkflow ? 'Edit Workflow' : 'Create New Workflow'}
@@ -545,9 +677,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                   setError(null);
                   onCancel();
                 }}
-                className={`inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 ${
-                  loading ? 'cursor-not-allowed opacity-50' : ''
-                }`}
+                className={`inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 ${loading ? 'cursor-not-allowed opacity-50' : ''}`}
                 disabled={loading}
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
@@ -556,7 +686,6 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
             )}
           </div>
 
-          {/* Loading Indicator */}
           {loading && (
             <div className="mb-4 p-4 bg-purple-50 border-l-4 border-purple-300 text-purple-700 flex items-center">
               <span className="animate-spin mr-2">⏳</span>
@@ -564,7 +693,6 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
             </div>
           )}
 
-          {/* Error Message */}
           {error && (
             <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-center">
               <AlertCircle className="w-5 h-5 mr-2" />
@@ -572,23 +700,18 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
             </div>
           )}
 
-          {/* Progress Steps */}
           <div className="mb-8">
             <div className="flex items-center justify-between">
               {[1, 2, 3].map((step) => (
                 <div key={step} className="flex items-center">
                   <div
-                    className={`rounded-full h-10 w-10 flex items-center justify-center ${
-                      step <= currentStep ? 'bg-purple-600 text-white' : 'bg-gray-200'
-                    }`}
+                    className={`rounded-full h-10 w-10 flex items-center justify-center ${step <= currentStep ? 'bg-purple-600 text-white' : 'bg-gray-200'}`}
                   >
                     {step}
                   </div>
                   {step < 3 && (
                     <div
-                      className={`h-1 w-24 ${
-                        step < currentStep ? 'bg-purple-600' : 'bg-gray-200'
-                      }`}
+                      className={`h-1 w-24 ${step < currentStep ? 'bg-purple-600' : 'bg-gray-200'}`}
                     />
                   )}
                 </div>
@@ -596,7 +719,6 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
             </div>
           </div>
 
-          {/* Step 1: Workflow Details */}
           {currentStep === 1 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-bold text-gray-900">Workflow Details</h2>
@@ -644,7 +766,6 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
             </div>
           )}
 
-          {/* Step 2: Stage Details */}
           {currentStep === 2 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-bold text-gray-900">Stage Details</h2>
@@ -731,8 +852,8 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                     Any/All Flag <span className="text-red-500">*</span>
                   </label>
                   <select
-                    value={currentStage.any_all_flag}
-                    onChange={(e) => setCurrentStage({ ...currentStage, any_all_flag: e.target.value as 'any' | 'all' })}
+                    value={currentStage.anyAllFlag}
+                    onChange={(e) => setCurrentStage({ ...currentStage, anyAllFlag: e.target.value as 'any' | 'all' })}
                     className={inputStyles}
                     required
                     disabled={loading}
@@ -746,8 +867,8 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                   <label className="flex items-center space-x-2">
                     <input
                       type="checkbox"
-                      checked={currentStage.conflictOfInterestCheck}
-                      onChange={(e) => setCurrentStage({ ...currentStage, conflictOfInterestCheck: e.target.checked })}
+                      checked={currentStage.conflictCheck}
+                      onChange={(e) => setCurrentStage({ ...currentStage, conflictCheck: e.target.checked })}
                       className="rounded border-purple-300 text-purple-600 focus:ring-purple-500"
                       disabled={loading}
                     />
@@ -807,15 +928,99 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                     </div>
                   )}
                 </div>
+
+                <div className="mt-8 border-t pt-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Actions for this Stage</h3>
+                  <button
+                    type="button"
+                    onClick={handleAddAction}
+                    className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${loading ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500'}`}
+                    disabled={loading}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add New Action
+                  </button>
+
+                  {currentStage.actions.map((action, index) => (
+                    <div key={action.tempId || index} className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-2">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">Action Name</label>
+                            <input
+                              type="text"
+                              value={action.actionName}
+                              onChange={(e) => handleUpdateAction(index, 'actionName', e.target.value)}
+                              className={inputStyles}
+                              required
+                              disabled={loading}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">Action Description (optional)</label>
+                            <textarea
+                              value={action.actionDesc || ''}
+                              onChange={(e) => handleUpdateAction(index, 'actionDesc', e.target.value)}
+                              rows={2}
+                              className={inputStyles}
+                              disabled={loading}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">Result Type</label>
+                            <select
+                              value={action.nextStageType}
+                              onChange={(e) => handleUpdateAction(index, 'nextStageType', e.target.value as 'next' | 'prev' | 'complete')}
+                              className={inputStyles}
+                              required
+                              disabled={loading}
+                            >
+                              <option value="next">Move to Next Stage</option>
+                              <option value="prev">Return to Previous Stage</option>
+                              <option value="complete">Complete Workflow</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">Required Count</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max={currentStage.actorCount}
+                              value={action.requiredCount}
+                              onChange={(e) => handleUpdateAction(index, 'requiredCount', parseInt(e.target.value) || 1)}
+                              className={inputStyles}
+                              required
+                              disabled={loading}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleDeleteAction(index)}
+                            className={`p-1 text-gray-500 hover:text-red-600 transition-colors ${loading ? 'cursor-not-allowed opacity-50' : ''}`}
+                            title="Delete Action"
+                            disabled={loading}
+                          >
+                            <Trash2 className="h-5 w-5" />
+                          </button>
+                        </div>
+                      </div>
+                      {index < currentStage.actions.length - 1 && (
+                        <div className="mt-2 flex items-center">
+                          <ArrowRight className="h-4 w-4 text-gray-400" />
+                          <span className="text-sm text-gray-500">Next Action</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div className="flex justify-end space-x-4 mt-4">
                 <button
                   type="button"
                   onClick={editingStageIndex !== null ? handleUpdateStage : handleAddStage}
-                  className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
-                    loading ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500'
-                  }`}
+                  className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${loading ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500'}`}
                   disabled={loading}
                 >
                   <Plus className="w-4 h-4 mr-2" />
@@ -831,21 +1036,32 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                       <div key={index} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                         <div className="flex justify-between items-start">
                           <div>
-                            <h4 className="font-medium">{stage.stage_name}</h4>
-                            <p className="text-sm text-gray-600">{stage.stage_desc}</p>
+                            <h4 className="font-medium">{stage.stageName}</h4>
+                            <p className="text-sm text-gray-600">{stage.stageDesc}</p>
                             <div className="mt-2 space-y-1">
-                              <p className="text-sm text-gray-500">Actor: {stage.actor_name} ({stage.actor_type})</p>
-                              <p className="text-sm text-gray-500">Any/All: {stage.any_all_flag}</p>
-                              <p className="text-sm text-gray-500">Conflict Check: {stage.conflict_check ? 'Yes' : 'No'}</p>
-                              <p className="text-sm text-gray-500">Documents Required: {stage.no_of_uploads} ({stage.document_required ? 'Yes' : 'No'})</p>
+                              <p className="text-sm text-gray-500">Actor: {stage.actorName} ({stage.actorType})</p>
+                              <p className="text-sm text-gray-500">Any/All: {stage.anyAllFlag}</p>
+                              <p className="text-sm text-gray-500">Conflict Check: {stage.conflictCheck ? 'Yes' : 'No'}</p>
+                              <p className="text-sm text-gray-500">Documents Required: {stage.noOfUploads} ({stage.documentRequired ? 'Yes' : 'No'})</p>
+                              {stage.actions && stage.actions.length > 0 && (
+                                <div className="mt-2">
+                                  <p className="text-sm text-gray-500 font-medium">Actions:</p>
+                                  <ul className="list-disc list-inside ml-2">
+                                    {stage.actions.map((action, aIndex) => (
+                                      <li key={aIndex} className="text-sm text-gray-600">
+                                        {action.actionName} → {action.nextStageType} (Required: {action.requiredCount})
+                                        {action.actionDesc && <span className="block text-sm text-gray-500 ml-4">Description: {action.actionDesc}</span>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="flex space-x-2">
                             <button
                               onClick={() => handleEditStage(index)}
-                              className={`p-1 text-gray-500 hover:text-purple-600 transition-colors ${
-                                loading ? 'cursor-not-allowed opacity-50' : ''
-                              }`}
+                              className={`p-1 text-gray-500 hover:text-purple-600 transition-colors ${loading ? 'cursor-not-allowed opacity-50' : ''}`}
                               title="Edit Stage"
                               disabled={loading}
                             >
@@ -853,9 +1069,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                             </button>
                             <button
                               onClick={() => handleDeleteStage(index)}
-                              className={`p-1 text-gray-500 hover:text-red-600 transition-colors ${
-                                loading ? 'cursor-not-allowed opacity-50' : ''
-                              }`}
+                              className={`p-1 text-gray-500 hover:text-red-600 transition-colors ${loading ? 'cursor-not-allowed opacity-50' : ''}`}
                               title="Delete Stage"
                               disabled={loading}
                             >
@@ -871,7 +1085,6 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
             </div>
           )}
 
-          {/* Step 3: Review */}
           {currentStep === 3 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-bold text-gray-900">Review</h2>
@@ -898,32 +1111,47 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                 <div className="space-y-4">
                   {stages.map((stage, index) => (
                     <div key={index} className="border border-gray-200 rounded-lg p-4">
-                      <h4 className="font-medium">{stage.stage_name}</h4>
+                      <h4 className="font-medium">{stage.stageName}</h4>
                       <dl className="mt-2 grid grid-cols-2 gap-2 text-sm">
                         <div>
                           <dt className="text-gray-500">Actor Type</dt>
-                          <dd>{stage.actor_type}</dd>
+                          <dd>{stage.actorType}</dd>
                         </div>
                         <div>
                           <dt className="text-gray-500">Actor Name</dt>
-                          <dd>{stage.actor_name}</dd>
+                          <dd>{stage.actorName}</dd>
                         </div>
                         <div>
                           <dt className="text-gray-500">Actor Count</dt>
-                          <dd>{stage.actor_count}</dd>
+                          <dd>{stage.actorCount}</dd>
                         </div>
                         <div>
                           <dt className="text-gray-500">Any/All</dt>
-                          <dd>{stage.any_all_flag}</dd>
+                          <dd>{stage.anyAllFlag}</dd>
                         </div>
                         <div>
                           <dt className="text-gray-500">Conflict Check</dt>
-                          <dd>{stage.conflict_check ? 'Yes' : 'No'}</dd>
+                          <dd>{stage.conflictCheck ? 'Yes' : 'No'}</dd>
                         </div>
                         <div>
                           <dt className="text-gray-500">Documents Required</dt>
-                          <dd>{stage.no_of_uploads} ({stage.document_required ? 'Yes' : 'No'})</dd>
+                          <dd>{stage.noOfUploads} ({stage.documentRequired ? 'Yes' : 'No'})</dd>
                         </div>
+                        {stage.actions && stage.actions.length > 0 && (
+                          <div className="col-span-2">
+                            <dt className="text-gray-500">Actions</dt>
+                            <dd>
+                              <ul className="list-disc list-inside">
+                                {stage.actions.map((action, aIndex) => (
+                                  <li key={aIndex} className="text-sm">
+                                    {action.actionName} → {action.nextStageType} (Required: {action.requiredCount})
+                                    {action.actionDesc && <span className="block text-sm text-gray-500 ml-4">Description: {action.actionDesc}</span>}
+                                  </li>
+                                ))}
+                              </ul>
+                            </dd>
+                          </div>
+                        )}
                       </dl>
                     </div>
                   ))}
@@ -932,7 +1160,6 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
             </div>
           )}
 
-          {/* Navigation Buttons */}
           <div className="mt-8 flex justify-between">
             {currentStep > 1 && (
               <button
@@ -941,9 +1168,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
                   setCurrentStep((prev) => (prev - 1) as WizardStep);
                   setError(null);
                 }}
-                className={`inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 ${
-                  loading ? 'cursor-not-allowed opacity-50' : ''
-                }`}
+                className={`inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 ${loading ? 'cursor-not-allowed opacity-50' : ''}`}
                 disabled={loading}
               >
                 Previous
@@ -953,9 +1178,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
               <button
                 type="button"
                 onClick={handleNextStep}
-                className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
-                  loading ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500'
-                }`}
+                className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${loading ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500'}`}
                 disabled={loading}
               >
                 Next
@@ -965,9 +1188,7 @@ const WorkflowWizard: React.FC<WorkflowWizardProps> = ({ onComplete, existingWor
               <button
                 type="button"
                 onClick={handleSubmit}
-                className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
-                  loading ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500'
-                }`}
+                className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${loading ? 'bg-gray-400 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500'}`}
                 disabled={loading}
               >
                 <Save className="mr-2 h-4 w-4" />
